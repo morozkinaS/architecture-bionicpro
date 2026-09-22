@@ -1,0 +1,14 @@
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # issuer в JWT остаётся http://localhost:8080 (Keycloak доступен с хоста),
+          # а ключи подписи берём по имени сервиса внутри docker-сети
+          issuer-uri: http://localhost:8080/realms/reports-realm
+          jwk-set-uri: http://keycloak:8080/realms/reports-realm/protocol/openid-connect/certs
+
+clickhouse:
+  url: jdbc:clickhouse://clickhouse:8123/default?compress=0
+  username: default
+  password: clickhouse

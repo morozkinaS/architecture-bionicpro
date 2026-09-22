@@ -1,0 +1,17 @@
+server:
+  port: 8000
+
+spring:
+  application:
+    name: reports-api
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # issuer в JWT формируется Keycloak'ом как http://localhost:8080/realms/reports-realm
+          issuer-uri: http://localhost:8080/realms/reports-realm
+
+clickhouse:
+  url: jdbc:clickhouse://localhost:8123/default?compress=0
+  username: default
+  password: clickhouse
