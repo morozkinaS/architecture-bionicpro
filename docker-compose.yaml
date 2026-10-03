@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # ---------- Идентификация и доступ (Задание 1) ----------
   keycloak_db:
     image: postgres:14
     environment:
@@ -20,7 +21,7 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak_db:5432/keycloak_db
       KC_DB_USERNAME: keycloak_user
       KC_DB_PASSWORD: keycloak_password
-    command: 
+    command:
       - start-dev
       - --import-realm
     volumes:
@@ -29,6 +30,134 @@ services:
       - "8080:8080"
     depends_on:
       - keycloak_db
+
+  # ---------- Источники данных для ETL (Задание 2) ----------
+  data_db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: bionicpro_data
+      POSTGRES_USER: bionicpro
+      POSTGRES_PASSWORD: bionicpro_password
+    volumes:
+      - ./data/init:/docker-entrypoint-initdb.d
+      - ./postgres-data-data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bionicpro -d bionicpro_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- OLAP-витрина отчётности (Задание 2) ----------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- ETL: Apache Airflow (Задание 2) ----------
+  airflow_db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - ./postgres-airflow-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow-init:
+    image: apache/airflow:2.9.3
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow_db:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW_CONN_BIONICPRO_DATA_DB: postgresql://bionicpro:bionicpro_password@data_db:5432/bionicpro_data
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-postgres clickhouse-connect
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create --username admin --firstname Admin --lastname Admin --role Admin --email admin@example.com --password admin
+    depends_on:
+      airflow_db:
+        condition: service_healthy
+      data_db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow_db:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW_CONN_BIONICPRO_DATA_DB: postgresql://bionicpro:bionicpro_password@data_db:5432/bionicpro_data
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-postgres clickhouse-connect
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    ports:
+      - "8081:8080"
+    command: webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow_db:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW_CONN_BIONICPRO_DATA_DB: postgresql://bionicpro:bionicpro_password@data_db:5432/bionicpro_data
+      _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-postgres clickhouse-connect
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ---------- Бэкенд-сервис API отчётов (Задание 2) ----------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  # ---------- Фронтенд (Задание 1 и 2) ----------
   frontend:
     build:
       context: ./frontend
@@ -40,3 +169,9 @@ services:
       REACT_APP_KEYCLOAK_URL: http://localhost:8080
       REACT_APP_KEYCLOAK_REALM: reports-realm
       REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
+    depends_on:
+      - backend
+      - keycloak
+
+volumes:
+  clickhouse-data:

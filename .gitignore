@@ -1,2 +1,16 @@
 /postgres-keycloak-data
+/postgres-airflow-data
+/postgres-data-data
+/clickhouse-data
 2024__yandex-architecture-sso.code-workspace
+
+# IDE
+.idea/
+.omo/
+
+# Build artifacts
+backend/target/
+frontend/node_modules/
+frontend/build/
+__pycache__/
+*.pyc
